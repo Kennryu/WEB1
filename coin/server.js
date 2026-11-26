@@ -1,6 +1,7 @@
 // 풀노드: HTTP API + 간단한 P2P(블록/거래 전파, 최장 체인 동기화) + 채굴
 //   PORT=3001 PEERS=http://localhost:3002 MINER_ADDRESS=D... node server.js
 const http = require('http');
+const fs = require('fs');
 const path = require('path');
 const { Blockchain, Miner, Transaction, config, formatCoin, isValidAddress, difficulty } = require('./src');
 
@@ -37,8 +38,18 @@ const routes = {
     name: config.NAME, ticker: config.TICKER, height: chain.height, tip: chain.tip.hash,
     difficulty: difficulty(chain.tip.bits), nextBits: '0x' + chain.nextBits().toString(16),
     blockTime: config.BLOCK_TIME, mempool: chain.mempool.size, peers: [...peers],
-    mining: !!miner?.running, hashrate: miner?.hashrate ?? 0, chainWork: chain.chainWork.toString(),
+    mining: !!miner?.running, miningAddress: miner?.running ? miner.address : null,
+    hashrate: miner?.hashrate ?? 0, chainWork: chain.chainWork.toString(),
+    params: {
+      addressVersion: config.ADDRESS_VERSION, wifVersion: config.WIF_VERSION, coin: config.COIN,
+      minFeePerKb: config.MIN_FEE_PER_KB, dust: config.DUST_LIMIT, coinbaseMaturity: config.COINBASE_MATURITY,
+    },
   }),
+  'GET /recent-blocks': () => chain.blocks.slice(-10).reverse().map((b) => ({
+    height: b.height, hash: b.hash, time: b.time, txs: b.transactions.length,
+    reward: b.transactions[0].totalOut(), miner: b.transactions[0].outputs[0].address, difficulty: difficulty(b.bits),
+  })),
+  'GET /history/:address': ({ address }) => chain.getHistory(address),
   'GET /blocks': () => chain.blocks.map((b) => b.toJSON()),
   'GET /block/:id': ({ id }) => chain.getBlock(id)?.toJSON() ?? { status: 404, error: '블록 없음' },
   'GET /tx/:txid': ({ txid }) => chain.findTx(txid) ?? { status: 404, error: '거래 없음' },
@@ -98,9 +109,25 @@ function match(method, url) {
   return null;
 }
 
+// 웹 지갑 정적 파일 (public/)
+const PUBLIC = path.join(__dirname, 'public');
+const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css', '.svg': 'image/svg+xml' };
+function serveStatic(url, res) {
+  const file = path.join(PUBLIC, url === '/' ? 'index.html' : url);
+  if (!file.startsWith(PUBLIC + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile() || !MIME[path.extname(file)]) return false;
+  res.writeHead(200, { 'content-type': MIME[path.extname(file)], 'cache-control': 'no-cache' });
+  res.end(fs.readFileSync(file));
+  return true;
+}
+
 const server = http.createServer(async (req, res) => {
   const url = req.url.split('?')[0];
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, { 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type, x-peer', 'access-control-allow-methods': 'GET, POST' });
+    return res.end();
+  }
   const route = match(req.method, url);
+  if (!route && req.method === 'GET' && serveStatic(url, res)) return;
   let status = 200, out;
   try {
     if (!route) { status = 404; out = { error: '없는 경로' }; }
@@ -117,6 +144,7 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, async () => {
   log(`🐕 ${config.NAME} 노드 시작 ${SELF} (높이 ${chain.height}, 목표 블록시간 ${config.BLOCK_TIME}초)`);
+  log(`👛 웹 지갑: ${SELF}/`);
   for (const p of peers) { await post(p + '/peers', { url: SELF }); await syncFrom(p); }
   if (process.env.MINER_ADDRESS) routes['POST /mine/start']({}, {});
 });

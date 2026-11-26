@@ -250,6 +250,39 @@ class Blockchain extends EventEmitter {
     return m ? { tx: m, confirmations: 0 } : null;
   }
 
+  // 주소의 거래 내역 (최신순). amount = 받은 금액 − 보낸 금액
+  getHistory(address, limit = 50) {
+    const outputs = new Map(); // txid → outputs (입력의 원래 주인을 찾기 위해)
+    const entries = [];
+    const visit = (tx, block) => {
+      const id = tx.txid;
+      outputs.set(id, tx.outputs);
+      const received = tx.outputs.filter((o) => o.address === address).reduce((s, o) => s + o.value, 0n);
+      let sent = 0n;
+      if (!tx.isCoinbase()) {
+        for (const i of tx.inputs) {
+          const o = outputs.get(i.txid)?.[i.vout];
+          if (o && o.address === address) sent += o.value;
+        }
+      }
+      if (received === 0n && sent === 0n) return;
+      const others = tx.outputs.filter((o) => o.address !== address).map((o) => o.address);
+      entries.push({
+        txid: id,
+        type: tx.isCoinbase() ? 'mined' : sent > 0n ? 'sent' : 'received',
+        amount: received - sent,
+        counterparty: sent > 0n ? others[0] ?? address : null,
+        height: block ? block.height : null,
+        time: block ? block.time : null,
+        confirmations: block ? this.height - block.height + 1 : 0,
+        mature: !tx.isCoinbase() || (block && this.height + 1 - block.height >= config.COINBASE_MATURITY),
+      });
+    };
+    for (const b of this.blocks.slice(1)) for (const tx of b.transactions) visit(tx, b);
+    for (const tx of this.mempool.values()) visit(tx, null);
+    return entries.reverse().slice(0, limit);
+  }
+
   // ── 저장/불러오기 ───────────────────────────────────────
   save() {
     if (!this.dataFile) return;

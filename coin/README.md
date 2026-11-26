@@ -43,6 +43,21 @@ node cli.js send D주소 100.5
 NODE_URL=http://localhost:3002 node cli.js info
 ```
 
+### 👛 웹 지갑
+
+노드를 실행하고 브라우저에서 **http://localhost:3001/** 을 열면 됩니다.
+
+- 새 지갑 만들기 / 개인키(WIF) 가져오기
+- 잔액(사용 가능 · 성숙 대기), 주소 복사, 받기
+- 보내기: 수수료 자동 계산, "최대" 버튼, 확인 단계
+- 거래 내역(받음·보냄·채굴), 최근 블록, 네트워크 상태
+- 채굴 켜기/끄기 (보상은 내 주소로)
+- 설정: 접속할 노드 주소 변경, 개인키 백업 보기, 지갑 삭제
+
+개인키는 브라우저 안에서만 쓰입니다. `public/wallet-lib.js`가 secp256k1 서명(RFC6979)·SHA-256·RIPEMD-160을
+순수 JS로 구현해 브라우저에서 거래에 서명하고, 노드에는 서명된 거래만 보냅니다.
+개인키는 localStorage에 **암호화 없이** 저장되니 학습·테스트용으로만 쓰세요.
+
 테스트할 때는 `COINBASE_MATURITY=2 BLOCK_TIME=20` 처럼 환경변수로 낮추면 빠릅니다.
 
 ## 설정 (`src/config.js` 또는 환경변수)
@@ -59,6 +74,7 @@ NODE_URL=http://localhost:3002 node cli.js info
 | GET | `/blocks`, `/block/:높이또는해시` | 블록 조회 |
 | GET | `/tx/:txid`, `/mempool` | 거래 조회 |
 | GET | `/balance/:주소`, `/utxos/:주소` | 잔액 / 사용 가능한 UTXO |
+| GET | `/history/:주소`, `/recent-blocks` | 거래 내역 / 최근 블록 10개 |
 | POST | `/tx` | 서명된 거래 제출 |
 | POST | `/block` | (피어용) 새 블록 전파 |
 | POST | `/peers` | 피어 등록 `{ "url": "http://..." }` |
@@ -77,6 +93,8 @@ src/wallet.js       키 생성, 코인 선택, 잔돈, 수수료 계산
 src/miner.js        블록 템플릿, nonce 탐색
 server.js           풀노드 + P2P + API
 cli.js              지갑 CLI
+public/index.html   웹 지갑 화면
+public/wallet-lib.js 브라우저용 키·서명·거래 생성 (의존성 없음)
 ```
 
 > ⚠️ 학습용 구현입니다. 실제 자산을 다루는 메인넷 용도로는 보안 감사 없이 사용하지 마세요.

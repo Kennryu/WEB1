@@ -113,3 +113,25 @@ test('더 많은 작업량의 체인으로 재조직(reorg)', () => {
   assert.strictEqual(a.tip.hash, b.tip.hash);
   assert.ok(!b.replaceChain(a.blocks.slice(0, 2)));
 });
+
+test('웹 지갑(public/wallet-lib.js)이 만든 거래를 노드가 받아들인다', async () => {
+  const L = await import('./public/wallet-lib.js');
+  const nodeCrypto = require('crypto');
+  for (const n of [0, 55, 56, 64, 200]) {
+    const m = nodeCrypto.randomBytes(n);
+    assert.strictEqual(L.toHex(L.sha256(m)), nodeCrypto.createHash('sha256').update(m).digest('hex'));
+    assert.strictEqual(L.toHex(L.ripemd160(m)), nodeCrypto.createHash('ripemd160').update(m).digest('hex'));
+  }
+  const chain = new Blockchain();
+  const web = L.Wallet.generate();
+  assert.strictEqual(Wallet.fromWIF(web.wif).address, web.address);
+  const miner = new Miner(chain, web.address);
+  for (let i = 0; i < 3; i++) miner.mineBlockSync();
+  const bob = Wallet.generate();
+  const utxos = chain.getUtxos(web.address, { includeMempool: true }).filter((u) => chain.isMature(u));
+  const r = L.createTransaction(web, utxos, bob.address, parseCoin('321.5'));
+  const { txid } = chain.addToMempool(Transaction.fromJSON(r.json));
+  assert.strictEqual(txid, r.txid);
+  new Miner(chain, bob.address).mineBlockSync();
+  assert.strictEqual(chain.getBalance(bob.address).spendable, parseCoin('321.5'));
+});
