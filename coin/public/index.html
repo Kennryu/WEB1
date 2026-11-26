@@ -157,7 +157,15 @@
   .summary div span:last-child { font-variant-numeric: tabular-nums; text-align: right; }
   .summary .total { border-top: 1px solid var(--border); margin-top: 6px; padding-top: 8px; font-weight: 700; }
   .err { color: var(--neg); font-size: 13px; min-height: 18px; margin-top: 8px; }
-  .receive-addr { background: var(--surface-2); border-radius: 10px; padding: 16px; text-align: center; font-size: 15px; }
+  .receive-addr { background: var(--surface-2); border-radius: 10px; padding: 12px 14px; text-align: center; font-size: 14px; }
+  .qr-box { width: 220px; max-width: 100%; aspect-ratio: 1; margin: 0 auto 14px; background: #fff; border-radius: 12px; padding: 6px; border: 1px solid var(--border); }
+  .qr-box svg { display: block; width: 100%; height: 100%; }
+  .addr-field { display: flex; gap: 8px; }
+  .addr-field input { flex: 1; }
+  .addr-field .btn { padding: 0 12px; white-space: nowrap; }
+  .scan-video { width: 100%; border-radius: 10px; background: #000; aspect-ratio: 1; object-fit: cover; display: block; }
+  .balance-card .actions .qr-mini { margin-left: auto; padding: 6px; background: #fff; width: 44px; height: 44px; }
+  .qr-mini svg { display: block; width: 100%; height: 100%; }
 
   .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px); background: var(--text); color: var(--bg); padding: 10px 18px; border-radius: 10px; font-size: 14px; opacity: 0; transition: .25s; pointer-events: none; max-width: calc(100vw - 32px); z-index: 10; }
   .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
@@ -201,6 +209,7 @@
       <div class="row actions">
         <button class="btn" id="sendBtn">↑ 보내기</button>
         <button class="btn" id="receiveBtn">↓ 받기</button>
+        <button class="btn qr-mini" id="qrMini" title="QR 코드 보기" aria-label="QR 코드 보기"></button>
       </div>
     </section>
 
@@ -240,7 +249,10 @@
     <div id="sendStep1">
       <div class="field">
         <label for="toAddr">받는 주소</label>
-        <input type="text" id="toAddr" placeholder="D로 시작하는 주소" autocomplete="off" spellcheck="false">
+        <div class="addr-field">
+          <input type="text" id="toAddr" placeholder="D로 시작하는 주소 또는 결제 링크" autocomplete="off" spellcheck="false">
+          <button type="button" class="btn" id="scanBtn" hidden>📷 스캔</button>
+        </div>
       </div>
       <div class="field">
         <label for="amount">금액 (<span class="ticker">WOW</span>)</label>
@@ -272,12 +284,29 @@
 <dialog id="receiveDlg">
   <div class="modal">
     <h3>받기</h3>
-    <p class="muted" style="margin-top:0">이 주소로 <span class="ticker">WOW</span>를 보내 달라고 하세요.</p>
+    <p class="muted" style="margin-top:0">QR 코드를 찍거나 주소를 복사해 <span class="ticker">WOW</span>를 보내 달라고 하세요.</p>
+    <div class="qr-box" id="recvQr"></div>
     <div class="receive-addr mono" id="recvAddr"></div>
+    <div class="field" style="margin-top:14px">
+      <label for="recvAmount">요청 금액 (선택)</label>
+      <input type="text" id="recvAmount" inputmode="decimal" placeholder="금액을 넣으면 QR에 함께 담깁니다" autocomplete="off">
+    </div>
+    <div class="err" id="recvErr"></div>
     <div class="foot">
+      <button class="btn" id="recvCopyUri">결제 링크 복사</button>
       <button class="btn" id="recvCopy">주소 복사</button>
       <button class="btn primary" data-close>닫기</button>
     </div>
+  </div>
+</dialog>
+
+<!-- QR 스캔 -->
+<dialog id="scanDlg">
+  <div class="modal">
+    <h3>QR 코드 스캔</h3>
+    <video class="scan-video" id="scanVideo" playsinline muted></video>
+    <p class="muted" style="font-size:13px;margin-bottom:0">주소나 결제 링크 QR을 화면 가운데에 맞춰 주세요.</p>
+    <div class="foot"><button class="btn primary" data-close>닫기</button></div>
   </div>
 </dialog>
 
@@ -310,6 +339,7 @@
 
 <script type="module">
 import * as W from './wallet-lib.js';
+import { qrSvg } from './qr.js';
 
 const $ = (id) => document.getElementById(id);
 const store = {
@@ -367,6 +397,7 @@ function setWallet(w) {
   if (w) {
     $('myAddress').textContent = w.address;
     $('recvAddr').textContent = w.address;
+    $('qrMini').innerHTML = qrSvg(w.address, { margin: 0 });
     refresh();
   }
 }
@@ -471,7 +502,66 @@ $('importBtn').onclick = () => {
 
 $('copyAddr').onclick = () => copy(wallet.address);
 $('recvCopy').onclick = () => copy(wallet.address);
-$('receiveBtn').onclick = () => $('receiveDlg').showModal();
+
+// ── 받기 / QR ─────────────────────────────────────────
+// 결제 링크: wowcoin:D주소?amount=12.5  (비트코인 BIP21 과 같은 형식)
+const scheme = () => (info?.name || 'wowcoin').toLowerCase();
+function paymentUri() {
+  const raw = $('recvAmount').value.trim();
+  $('recvErr').textContent = '';
+  if (!raw) return `${scheme()}:${wallet.address}`;
+  try {
+    const amt = W.parseCoin(raw);
+    if (amt <= 0n) throw new Error('0보다 큰 금액을 넣어 주세요');
+    return `${scheme()}:${wallet.address}?amount=${W.formatCoin(amt)}`;
+  } catch (e) { $('recvErr').textContent = e.message; return `${scheme()}:${wallet.address}`; }
+}
+function renderReceiveQr() { $('recvQr').innerHTML = qrSvg(paymentUri()); }
+function openReceive() { $('recvAmount').value = ''; renderReceiveQr(); $('receiveDlg').showModal(); }
+$('receiveBtn').onclick = openReceive;
+$('qrMini').onclick = openReceive;
+$('recvAmount').oninput = renderReceiveQr;
+$('recvCopyUri').onclick = () => copy(paymentUri());
+
+// 주소 칸에 결제 링크를 붙여 넣으면 주소와 금액으로 나눔
+function applyPaymentText(text) {
+  const t = text.trim();
+  const m = t.match(/^([a-z][a-z0-9+.-]*):([1-9A-HJ-NP-Za-km-z]+)(?:\?(.*))?$/i);
+  if (!m) { $('toAddr').value = t; return; }
+  $('toAddr').value = m[2];
+  const amount = new URLSearchParams(m[3] || '').get('amount');
+  if (amount) $('amount').value = amount;
+}
+$('toAddr').addEventListener('change', (e) => applyPaymentText(e.target.value));
+$('toAddr').addEventListener('paste', (e) => {
+  const text = e.clipboardData?.getData('text');
+  if (text && text.includes(':')) { e.preventDefault(); applyPaymentText(text); }
+});
+
+// 카메라 스캔: BarcodeDetector 를 지원하는 브라우저(안드로이드 크롬 등)에서만 버튼 표시
+let scanStream = null;
+if ('BarcodeDetector' in window && navigator.mediaDevices?.getUserMedia) $('scanBtn').hidden = false;
+function stopScan() { scanStream?.getTracks().forEach((t) => t.stop()); scanStream = null; }
+$('scanDlg').addEventListener('close', stopScan);
+$('scanBtn').onclick = async () => {
+  try {
+    const detector = new BarcodeDetector({ formats: ['qr_code'] });
+    scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    const video = $('scanVideo');
+    video.srcObject = scanStream;
+    await video.play();
+    $('scanDlg').showModal();
+    const tick = async () => {
+      if (!scanStream) return;
+      try {
+        const [code] = await detector.detect(video);
+        if (code) { applyPaymentText(code.rawValue); $('scanDlg').close(); toast('QR 코드를 읽었습니다'); return; }
+      } catch {}
+      requestAnimationFrame(tick);
+    };
+    tick();
+  } catch (e) { stopScan(); toast('카메라를 열 수 없습니다: ' + e.message); }
+};
 document.querySelectorAll('[data-close]').forEach((b) => (b.onclick = () => b.closest('dialog').close()));
 
 // ── 보내기 ───────────────────────────────────────────
