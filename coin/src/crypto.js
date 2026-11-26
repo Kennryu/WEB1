@@ -4,7 +4,15 @@ const config = require('./config');
 
 const sha256 = (b) => crypto.createHash('sha256').update(b).digest();
 const sha256d = (b) => sha256(sha256(b));
-const hash160 = (b) => crypto.createHash('ripemd160').update(sha256(b)).digest();
+// OpenSSL 에 RIPEMD-160 이 없으면(일부 Termux 등) 순수 JS 구현 사용
+let ripemd160;
+try {
+  crypto.createHash('ripemd160').update('').digest();
+  ripemd160 = (b) => crypto.createHash('ripemd160').update(b).digest();
+} catch {
+  ripemd160 = require('./ripemd160');
+}
+const hash160 = (b) => ripemd160(sha256(b));
 
 // 도지코인 PoW 해시: scrypt(header, salt=header, N=1024, r=1, p=1)
 function scryptHash(header) {
